@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+<title>KKClaw Switch</title>
+<link rel="stylesheet" href="model-settings.css">
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <span class="header-title">KKClaw Switch</span>
+  </div>
+  <div class="header-right">
+    <span class="lang-toggle" onclick="toggleLang()" id="langBtn">中/EN</span>
+    <div class="header-tab active" data-tab="main" onclick="showTab('main')"><span data-t="providers">服务商</span></div>
+    <div class="header-tab" data-tab="models" onclick="showTab('models')"><span data-t="models">模型</span></div>
+    <div class="header-tab" data-tab="logs" onclick="showTab('logs')"><span data-t="logs">日志</span></div>
+    <button class="header-add" onclick="showTab('add')" title="添加">+</button>
+    <div class="header-close" onclick="window.close()" title="关闭">×</div>
+  </div>
+</div>
+
+<!-- Panel 1: Provider List -->
+<div id="panel-main" class="panel active">
+  <div class="current-indicator" id="currentIndicator"></div>
+  <div style="padding: 0 16px 6px; display: flex; gap: 6px; flex-wrap: wrap;">
+    <button class="btn btn-speed btn-sm" onclick="speedTestAll()" id="speedTestAllBtn"><span data-t="testAll">全部测速</span></button>
+    <button class="btn btn-ghost btn-sm" onclick="refreshAll()"><span data-t="refresh">刷新</span></button>
+    <button class="btn btn-ghost btn-sm" onclick="syncCCSwitch()"><span data-t="syncCc">同步CC</span></button>
+    <button class="btn btn-ghost btn-sm" onclick="showSwitchStats()"><span data-t="switchStats">切换统计</span></button>
+  </div>
+  <div class="provider-search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input type="text" id="providerSearchInput" placeholder="搜索供应商..." oninput="filterProvidersDebounced(this.value)">
+  </div>
+  <div class="provider-list" id="providerList"></div>
+</div>
+
+<!-- Context Menu -->
+<div class="context-menu" id="contextMenu">
+  <div class="context-menu-item" data-action="switch"><span data-t="switchBtn">切换</span></div>
+  <div class="context-menu-item" data-action="edit"><span data-t="edit">编辑</span></div>
+  <div class="context-menu-item" data-action="probe"><span data-t="probe">探测</span></div>
+  <div class="context-menu-item" data-action="speed"><span data-t="test">测速</span></div>
+  <div class="context-menu-divider"></div>
+  <div class="context-menu-item danger" data-action="delete"><span data-t="delete">删除</span></div>
+</div>
+
+<!-- Panel 2: Model List -->
+<div id="panel-models" class="panel">
+  <div class="model-panel" id="modelPanel"></div>
+</div>
+
+<!-- Panel 3: Add Provider -->
+<div id="panel-add" class="panel">
+  <div class="add-panel">
+    <div class="preset-section-title"><span data-t="presetTitle">选择预设</span></div>
+    <div class="preset-grid" id="presetGrid"></div>
+
+    <div class="form-hint" style="text-align: center; margin-bottom: 12px;">
+      <span data-t="presetHint">选择预设后只需填写 API Key</span><br>
+      <span style="color:var(--text-tertiary); font-size:10px;"><span data-t="relayHint">没有 API Key？试试</span> <a href="https://api.kk666.online" target="_blank" style="color:var(--accent-green);text-decoration:none;">api.kk666.online</a></span>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="form-section">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label"><span data-t="providerName">名称</span> *</label>
+          <input class="form-input" id="addName" placeholder="e.g. MyOpenAI">
+        </div>
+        <div class="form-group">
+          <label class="form-label"><span data-t="notes">备注</span></label>
+          <input class="form-input" id="addNotes" placeholder="e.g. 公司账号">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Base URL *</label>
+        <input class="form-input" id="addBaseUrl" placeholder="https://api.kk666.online/v1" value="https://api.kk666.online/v1">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">API Key *</label>
+          <input class="form-input" id="addApiKey" type="password" placeholder="sk-...">
+        </div>
+        <div class="form-group">
+          <label class="form-label"><span data-t="apiType">接口类型</span></label>
+          <select class="form-select" id="addApiType">
+            <option value="anthropic-messages">Anthropic Messages (Claude)</option>
+            <option value="openai-completions">OpenAI Completions (GPT/DeepSeek/Gemini/Qwen...)</option>
+            <option value="openai-responses">OpenAI Responses (GPT-5/Codex)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 6px;"><span data-t="modelsOptional">模型（可选）</span></div>
+      <div id="addModelRows">
+        <div class="form-row" style="margin-bottom: 6px;">
+          <input class="form-input" placeholder="Model ID (e.g. gpt-4o)" data-field="id">
+          <input class="form-input" placeholder="显示名称" data-field="name">
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm" style="margin-bottom: 12px;" onclick="addModelRow()"><span data-t="addModel">+ 添加模型</span></button>
+
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-primary btn-block" onclick="submitProvider()"><span data-t="addBtn">+ 添加</span></button>
+        <button class="btn btn-ghost" onclick="showTab('main')"><span data-t="cancel">取消</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Panel 4: Edit -->
+<div id="panel-edit" class="panel">
+  <div class="edit-panel" id="editPanel"></div>
+</div>
+
+<!-- Panel 5: Logs -->
+<div id="panel-logs" class="panel">
+  <div class="log-toolbar">
+    <span class="log-filter active" data-level="all" onclick="filterLogs('all',this)"><span data-t="logAll">全部</span></span>
+    <span class="log-filter" data-level="success" onclick="filterLogs('success',this)"><span data-t="logSuccess">成功</span></span>
+    <span class="log-filter" data-level="info" onclick="filterLogs('info',this)"><span data-t="logInfo">信息</span></span>
+    <span class="log-filter" data-level="warn" onclick="filterLogs('warn',this)"><span data-t="logWarn">警告</span></span>
+    <span class="log-filter" data-level="error" onclick="filterLogs('error',this)"><span data-t="logError">错误</span></span>
+    <span style="flex:1"></span>
+    <button class="btn btn-ghost btn-sm" onclick="showGatewayStatus()">网关状态</button>
+    <button class="btn btn-ghost btn-sm" onclick="clearGatewayMetrics()">清监控</button>
+    <button class="btn btn-ghost btn-sm" onclick="refreshLogs()"><span data-t="logRefresh">刷新</span></button>
+    <button class="btn btn-danger btn-sm" onclick="clearLogs()"><span data-t="logClear">清除</span></button>
+  </div>
+  <div class="log-container" id="logContainer"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Info Panel (replaces alert) -->
+<div class="info-overlay" id="infoOverlay">
+  <div class="info-panel">
+    <div class="info-panel-header">
+      <span class="info-panel-title" id="infoPanelTitle"></span>
+      <div class="info-panel-close" onclick="closeInfoPanel()">×</div>
+    </div>
+    <div class="info-panel-body" id="infoPanelBody"></div>
+  </div>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+</div>
+
+<script src="model-settings.js"></script>
+</body>
+</html>

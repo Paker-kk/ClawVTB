@@ -1,0 +1,123 @@
+﻿{
+  "name": "openclaw-kkclaw",
+  "version": "3.0.0",
+  "description": "🦞 openclaw-kkclaw - Desktop visualization companion for OpenClaw with fluid glass orb, 14-emotion system, and voice cloning",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac --x64 --arm64",
+    "build:all": "electron-builder --win --mac --x64 --arm64",
+    "shortcut": "node scripts/create-shortcut.js",
+    "kill": "taskkill /IM electron.exe /F 2>nul || echo No running instance"
+  },
+  "keywords": [
+    "desktop-pet",
+    "electron",
+    "ai",
+    "openclaw",
+    "edge-tts",
+    "lobster",
+    "7x24",
+    "monitoring",
+    "auto-restart",
+    "smart-voice"
+  ],
+  "author": "kk43994",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  },
+  "build": {
+    "appId": "com.kk43994.kkclaw-desktop-pet",
+    "productName": "KKClaw Desktop Pet",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "dir",
+        "nsis"
+      ],
+      "icon": "icon.ico",
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "icon.icns",
+      "category": "public.app-category.utilities",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "KKClaw Desktop Pet"
+    },
+    "files": [
+      "**/*",
+      "!**/*.md",
+      "!docs-dev/**",
+      "!docs/**",
+      "!tests/**",
+      "!scripts/**",
+      "!archive/**",
+      "!screenshots/**",
+      "!temp/**",
+      "!work-logs/**",
+      "!clawhub-package/**",
+      "!.gitignore",
+      "!.git/**",
+      "!.github/**",
+      "!.claude/**",
+      "!pet-config.json",
+      "!*.credentials",
+      "!config.local.json",
+      "!test-*.js",
+      "!fix-*.js",
+      "!try-*.js",
+      "!simple-*.js",
+      "!detailed-*.js",
+      "!check-*.js",
+      "!verify-*.js",
+      "!register-*.js",
+      "!post-to-*.js",
+      "!reply-*.js",
+      "!update-*.js",
+      "!browse-*.js",
+      "!engage-*.js",
+      "!search-*.js",
+      "!monitor-*.js",
+      "!get-*.js",
+      "!batch-*.js"
+    ]
+  }
+}
