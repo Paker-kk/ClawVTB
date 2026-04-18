@@ -1,5 +1,5 @@
 ﻿// 🧙 Setup Wizard 后端逻辑 — IPC Handlers
-const { ipcMain } = require('electron');
+const { ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
@@ -7,6 +7,7 @@ const http = require('http');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
+const backendTooling = require('./utils/backend-tooling');
 
 class SetupWizard {
   constructor(petConfig) {
@@ -46,6 +47,18 @@ class SetupWizard {
     // Step 0: 环境预检 — 尝试启动 Gateway
     ipcMain.handle('wizard-start-gateway', async () => {
       return this._startGateway();
+    });
+
+    ipcMain.handle('wizard-install-copilot', async () => {
+      return this._installCopilotExtensions();
+    });
+
+    ipcMain.handle('wizard-install-codex', async () => {
+      return this._installCodex();
+    });
+
+    ipcMain.handle('wizard-select-vrm', async () => {
+      return this._selectVrm();
     });
 
     // Step 1: Gateway — 检测
@@ -280,12 +293,62 @@ class SetupWizard {
 
   // ─── Step 0: 环境预检 ──────────────────────
 
+  _getProjectVrmDir() {
+    return path.join(__dirname, 'models', 'vrm');
+  }
+
+  _getBundledVrmPath() {
+    try {
+      const vrmDir = this._getProjectVrmDir();
+      if (!fs.existsSync(vrmDir)) return '';
+
+      const entries = fs.readdirSync(vrmDir, { withFileTypes: true });
+      const vrmFile = entries
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.vrm'))
+        .map((entry) => entry.name)
+        .sort((left, right) => left.localeCompare(right, 'zh-CN'))[0];
+
+      return vrmFile ? path.join(vrmDir, vrmFile) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  _getVrmState() {
+    const vrmFilePath = this.petConfig.get('vrmFilePath') || '';
+    const hasCustomVrm = typeof vrmFilePath === 'string' && vrmFilePath.length > 0 && fs.existsSync(vrmFilePath);
+    const bundledVrmPath = this._getBundledVrmPath();
+    const hasBundledVrm = Boolean(bundledVrmPath && fs.existsSync(bundledVrmPath));
+    const activeVrmPath = hasCustomVrm ? vrmFilePath : hasBundledVrm ? bundledVrmPath : '';
+
+    if (!hasCustomVrm && vrmFilePath) {
+      this.petConfig.set('vrmFilePath', '');
+    }
+
+    return {
+      ok: Boolean(activeVrmPath),
+      hasCustomVrm,
+      hasBundledVrm,
+      activeVrmPath,
+      activeVrmName: activeVrmPath ? path.basename(activeVrmPath) : '',
+      activeVrmSource: hasCustomVrm ? 'custom' : hasBundledVrm ? 'bundled' : 'none',
+      projectDir: this._getProjectVrmDir()
+    };
+  }
+
   async _envCheck() {
     const results = {
       node: { ok: false, version: '', error: '' },
       openclaw: { ok: false, version: '', path: '', error: '' },
       gateway: { ok: false, port: 18789, error: '' },
       python: { ok: false, version: '', command: '', error: '' },
+      tools: {
+        vscode: { ok: false, path: '', canInstallExtensions: false, error: '' },
+        copilot: { ok: false, hasCopilot: false, hasCopilotChat: false, error: '' },
+        codex: { ok: false, path: '', version: '', error: '' },
+        claudeCode: { ok: false, path: '', version: '', error: '' }
+      },
+      vrm: { ok: false, activeVrmPath: '', activeVrmName: '', activeVrmSource: 'none', projectDir: this._getProjectVrmDir() }
     };
 
     // 1. Node.js 版本
@@ -397,6 +460,19 @@ class SetupWizard {
       results.python.error = '未检测到 Python 3.6+，Edge TTS 和 CosyVoice 将不可用';
     }
 
+    try {
+      results.tools = await backendTooling.getToolingStatus(this.homeDir);
+    } catch (error) {
+      results.tools = {
+        vscode: { ok: false, path: '', canInstallExtensions: false, error: error.message },
+        copilot: { ok: false, hasCopilot: false, hasCopilotChat: false, error: error.message },
+        codex: { ok: false, path: '', version: '', error: error.message },
+        claudeCode: { ok: false, path: '', version: '', error: error.message }
+      };
+    }
+
+    results.vrm = this._getVrmState();
+
     return results;
   }
 
@@ -437,6 +513,72 @@ class SetupWizard {
       return { success: false, error: 'Gateway 启动超时，请手动运行: openclaw gateway start' };
     } catch (e) {
       return { success: false, error: e.message };
+    }
+  }
+
+  async _installCopilotExtensions() {
+    try {
+      const vscodePath = await this._getVsCodeCliPath();
+      if (!vscodePath) {
+        return { success: false, error: '未检测到 VS Code 命令行入口，请先安装 VS Code' };
+      }
+
+      const extensions = ['GitHub.copilot', 'GitHub.copilot-chat'];
+      for (const extensionId of extensions) {
+        await execAsync(`"${vscodePath}" --install-extension ${extensionId} --force`, {
+          windowsHide: true,
+          timeout: 180000
+        });
+      }
+
+      return {
+        success: true,
+        tools: await this._getToolingStatus()
+      };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  async _installCodex() {
+    try {
+      await execAsync('npm install -g @openai/codex', { windowsHide: true, timeout: 180000 });
+    } catch (firstError) {
+      try {
+        await execAsync('npm install -g @openai/codex --registry https://registry.npmmirror.com', { windowsHide: true, timeout: 180000 });
+      } catch (secondError) {
+        return { success: false, error: secondError.message || firstError.message };
+      }
+    }
+
+    return {
+      success: true,
+      tools: await this._getToolingStatus()
+    };
+  }
+
+  async _selectVrm() {
+    try {
+      const vrmDir = this._getProjectVrmDir();
+      await fsPromises.mkdir(vrmDir, { recursive: true });
+
+      const result = await dialog.showOpenDialog({
+        title: '选择 VRM 模型',
+        defaultPath: vrmDir,
+        properties: ['openFile'],
+        filters: [{ name: 'VRM 模型', extensions: ['vrm'] }]
+      });
+
+      if (result.canceled || !result.filePaths?.length) {
+        return { success: false, canceled: true, vrm: this._getVrmState() };
+      }
+
+      this.petConfig.set('vrmFilePath', result.filePaths[0]);
+      this.petConfig.set('avatarMode', 'vrm-prototype');
+
+      return { success: true, canceled: false, vrm: this._getVrmState() };
+    } catch (error) {
+      return { success: false, error: error.message, vrm: this._getVrmState() };
     }
   }
 

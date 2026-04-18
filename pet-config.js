@@ -13,6 +13,21 @@ class PetConfig {
             position: { x: null, y: null },
             mood: 'happy', // happy, thinking, busy, sleepy
             theme: 'default',
+            activeBackendId: 'openclaw',
+            backendRouting: {
+                strategy: 'current-surface',
+                fallbackBackendId: 'openclaw',
+                surfaceBindings: {
+                    'desktop-pet': 'openclaw',
+                    desktop: 'openclaw',
+                    gateway: 'openclaw',
+                    terminal: 'claude-code',
+                    vscode: 'vscode-copilot',
+                    web: 'claude-code'
+                }
+            },
+            avatarMode: 'legacy',
+            vrmFilePath: '',
             voiceEnabled: true,
             lastSeen: Date.now()
         };

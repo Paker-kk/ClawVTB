@@ -20,9 +20,10 @@ if (process.env.ELECTRON_RUN_AS_NODE === '1') {
   }
 }
 
-const { app, BrowserWindow, ipcMain, screen, Menu, Tray, Notification, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Menu, Tray, Notification, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
 const OpenClawClient = require('./openclaw-client');
 const SmartVoiceSystem = require('./smart-voice'); // 🎙️ 智能语音系统
@@ -41,6 +42,11 @@ const GlobalErrorHandler = require('./global-error-handler'); // 🛡️ 全局�
 const GatewayGuardian = require('./gateway-guardian'); // 🛡️ Gateway 进程守护
 const ModelSwitcher = require('./model-switcher'); // 🔄 模型切换器
 const SetupWizard = require('./setup-wizard'); // 🧙 首次运行向导
+const BackendManager = require('./backend-manager'); // 🧭 多后端目录
+const {
+  createUserMessageEvent,
+  createAssistantMessageEvent
+} = require('./desktop-event-protocol');
 const configManager = require('./utils/config-manager'); // 🔒 配置管理
 const SecureStorage = require('./utils/secure-storage'); // 🔒 安全存储
 const pathResolver = require('./utils/openclaw-path-resolver'); // 🔧 路径解析
@@ -161,6 +167,77 @@ function sendLyric(data) {
     }
   }
 }
+
+function dispatchDesktopEvent(protocolEvent, options = {}) {
+  if (!protocolEvent || !mainWindow) return;
+
+  const {
+    notifyWhenBlurred = false,
+    suppressVoice = false,
+    suppressRenderer = false,
+    suppressLyric = false,
+    voiceMaxLength = 800
+  } = options;
+
+  if (protocolEvent.kind === 'user-message') {
+    if (!suppressRenderer) {
+      mainWindow.webContents.send('new-message', {
+        sender: protocolEvent.sender,
+        content: protocolEvent.displayContent,
+        channel: protocolEvent.channel
+      });
+    }
+
+    if (!suppressLyric) {
+      sendLyric({
+        text: protocolEvent.displayContent,
+        type: 'user',
+        sender: protocolEvent.sender
+      });
+    }
+
+    workLogger.logMessage(protocolEvent.sender, protocolEvent.displayContent);
+
+    if (notifyWhenBlurred && !mainWindow.isFocused()) {
+      new Notification({
+        title: protocolEvent.sender,
+        body: protocolEvent.displayContent.substring(0, 100),
+        icon: path.join(__dirname, 'icon.png')
+      }).show();
+    }
+
+    if (!suppressVoice && protocolEvent.displayContent && voiceSystem) {
+      voiceSystem.speak(protocolEvent.displayContent.substring(0, voiceMaxLength));
+    }
+
+    return;
+  }
+
+  if (protocolEvent.kind === 'assistant-message') {
+    if (!suppressRenderer) {
+      mainWindow.webContents.send('agent-response', {
+        content: protocolEvent.displayContent,
+        emotion: protocolEvent.emotion
+      });
+    }
+
+    if (!suppressLyric) {
+      sendLyric({
+        text: protocolEvent.displayContent,
+        type: 'agent',
+        sender: protocolEvent.sender,
+        duration: protocolEvent.duration
+      });
+    }
+
+    workLogger.log('message', `我回复: ${protocolEvent.displayContent}`);
+
+    if (!suppressVoice && protocolEvent.rawContent && voiceSystem) {
+      voiceSystem.speak(protocolEvent.rawContent.substring(0, voiceMaxLength), { emotion: protocolEvent.emotion || 'calm' });
+    }
+  }
+}
+
 let restartHandler; // 🔄 自动重启处理器
 let performanceMonitor; // 📊 性能监控
 let logRotation; // 📝 日志轮转
@@ -169,6 +246,190 @@ let gatewayGuardian; // 🛡️ Gateway 进程守护
 let modelSwitcher; // 🔄 模型切换器
 let setupWizard; // 🧙 首次运行向导
 let setupWizardWindow; // 🧙 向导窗口
+let backendManager; // 🧭 多后端管理器
+
+const AVATAR_MODES = Object.freeze({
+  LEGACY: 'legacy',
+  VRM_PROTOTYPE: 'vrm-prototype'
+});
+
+const DEFAULT_VRM_DIR = path.join(__dirname, 'models', 'vrm');
+
+function getBundledVrmPath() {
+  try {
+    if (!fs.existsSync(DEFAULT_VRM_DIR)) {
+      return '';
+    }
+
+    const entries = fs.readdirSync(DEFAULT_VRM_DIR, { withFileTypes: true });
+    const vrmFile = entries
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.vrm'))
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right, 'zh-CN'))[0];
+
+    return vrmFile ? path.join(DEFAULT_VRM_DIR, vrmFile) : '';
+  } catch (error) {
+    console.warn('⚠️ 读取默认 VRM 目录失败:', error.message);
+    return '';
+  }
+}
+
+function normalizeAvatarMode(mode) {
+  return Object.values(AVATAR_MODES).includes(mode) ? mode : AVATAR_MODES.LEGACY;
+}
+
+function getAvatarState() {
+  const avatarMode = normalizeAvatarMode(petConfig?.get('avatarMode'));
+  const vrmFilePath = petConfig?.get('vrmFilePath');
+  const hasCustomVrm = typeof vrmFilePath === 'string' && vrmFilePath.length > 0 && fs.existsSync(vrmFilePath);
+  const bundledVrmPath = getBundledVrmPath();
+  const hasBundledVrm = Boolean(bundledVrmPath && fs.existsSync(bundledVrmPath));
+  const activeVrmPath = hasCustomVrm ? vrmFilePath : hasBundledVrm ? bundledVrmPath : '';
+  const activeVrmSource = hasCustomVrm ? 'custom' : hasBundledVrm ? 'bundled' : 'placeholder';
+
+  if (!hasCustomVrm && vrmFilePath) {
+    petConfig.set('vrmFilePath', '');
+  }
+
+  return {
+    avatarMode,
+    hasCustomVrm,
+    hasBundledVrm,
+    vrmFilePath: hasCustomVrm ? vrmFilePath : '',
+    vrmFileName: hasCustomVrm ? path.basename(vrmFilePath) : '',
+    vrmFileUrl: hasCustomVrm ? pathToFileURL(vrmFilePath).href : ''
+    ,
+    bundledVrmPath: hasBundledVrm ? bundledVrmPath : '',
+    bundledVrmName: hasBundledVrm ? path.basename(bundledVrmPath) : '',
+    bundledVrmUrl: hasBundledVrm ? pathToFileURL(bundledVrmPath).href : '',
+    activeVrmPath: activeVrmPath || '',
+    activeVrmName: activeVrmPath ? path.basename(activeVrmPath) : '',
+    activeVrmUrl: activeVrmPath ? pathToFileURL(activeVrmPath).href : '',
+    activeVrmSource,
+    modelRotationY: petConfig?.get('modelRotationY') || 0
+  };
+}
+
+function getMainWindowEntry() {
+  return getAvatarState().avatarMode === AVATAR_MODES.VRM_PROTOTYPE
+    ? 'index-vrm.html'
+    : 'index.html';
+}
+
+async function applyAvatarMode(mode) {
+  const nextMode = normalizeAvatarMode(mode);
+  petConfig.set('avatarMode', nextMode);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.loadFile(getMainWindowEntry());
+  }
+
+  if (tray) {
+    rebuildTrayMenu();
+  }
+
+  return {
+    success: true,
+    ...getAvatarState()
+  };
+}
+
+async function selectVrmFile() {
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title: '选择 VRM 模型',
+    defaultPath: fs.existsSync(DEFAULT_VRM_DIR) ? DEFAULT_VRM_DIR : undefined,
+    properties: ['openFile'],
+    filters: [
+      { name: 'VRM 模型', extensions: ['vrm'] }
+    ]
+  });
+
+  if (result.canceled || !result.filePaths?.length) {
+    return {
+      success: false,
+      canceled: true,
+      ...getAvatarState()
+    };
+  }
+
+  petConfig.set('vrmFilePath', result.filePaths[0]);
+  petConfig.set('avatarMode', AVATAR_MODES.VRM_PROTOTYPE);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.loadFile(getMainWindowEntry());
+  }
+
+  if (tray) {
+    rebuildTrayMenu();
+  }
+
+  return {
+    success: true,
+    canceled: false,
+    ...getAvatarState()
+  };
+}
+
+function getAvatarModeMenuItem() {
+  const avatarState = getAvatarState();
+  const activeLabel = avatarState.activeVrmSource === 'custom'
+    ? `📦 当前 VRM: ${avatarState.activeVrmName}`
+    : avatarState.activeVrmSource === 'bundled'
+      ? `🧩 默认 VRM: ${avatarState.activeVrmName}`
+      : '📦 当前未选择 VRM';
+
+  return {
+    label: `🧬 角色模式: ${avatarState.avatarMode === AVATAR_MODES.VRM_PROTOTYPE ? '3D原型' : '经典球体'}`,
+    submenu: [
+      {
+        label: '🦞 经典球体',
+        type: 'radio',
+        checked: avatarState.avatarMode === AVATAR_MODES.LEGACY,
+        click: async () => {
+          await applyAvatarMode(AVATAR_MODES.LEGACY);
+          showServiceNotification('角色模式已切换', '已切换到经典球体');
+        }
+      },
+      {
+        label: '🐾 3D原型 / VRM',
+        type: 'radio',
+        checked: avatarState.avatarMode === AVATAR_MODES.VRM_PROTOTYPE,
+        click: async () => {
+          await applyAvatarMode(AVATAR_MODES.VRM_PROTOTYPE);
+          showServiceNotification('角色模式已切换', avatarState.hasCustomVrm ? `已载入 ${avatarState.vrmFileName}` : '已切换到 BACAT 3D 原型');
+        }
+      },
+      { type: 'separator' },
+      {
+        label: activeLabel,
+        enabled: false
+      },
+      {
+        label: '📂 选择本地 VRM...',
+        click: async () => {
+          const result = await selectVrmFile();
+          if (result.success) {
+            showServiceNotification('VRM 已载入', result.vrmFileName || '自定义模型已就绪');
+          }
+        }
+      },
+      {
+        label: '♻️ 清除已选 VRM',
+        enabled: avatarState.hasCustomVrm,
+        click: async () => {
+          petConfig.set('vrmFilePath', '');
+          if (tray) {
+            rebuildTrayMenu();
+          }
+          showServiceNotification('已清除 VRM', '已恢复为 BACAT 3D 原型');
+          if (mainWindow && !mainWindow.isDestroyed() && avatarState.avatarMode === AVATAR_MODES.VRM_PROTOTYPE) {
+            await mainWindow.loadFile(getMainWindowEntry());
+          }
+        }
+      }
+    ]
+  };
+}
 
 // 🛡️ 初始化全局错误处理 (最优先)
 errorHandler = new GlobalErrorHandler({
@@ -260,6 +521,16 @@ async function createWindow() {
   
   // 初始化所有系统
   openclawClient = new OpenClawClient();
+  backendManager = new BackendManager({
+    petConfig,
+    openclawClient,
+    homeDir: process.env.HOME || process.env.USERPROFILE || __dirname
+  });
+  backendManager.on('backend-changed', (status) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('status-update', status);
+    }
+  });
   voiceSystem = new SmartVoiceSystem(petConfig); // 🎙️ 智能语音系统
   workLogger = new WorkLogger();
   messageSync = new MessageSyncSystem(openclawClient);
@@ -464,65 +735,26 @@ async function createWindow() {
   // 监听桌面通知（服务器已在上面启动）
   desktopNotifier.on('user-message', (payload) => {
     console.log('👤 用户消息:', payload);
-    if (mainWindow) {
-      mainWindow.webContents.send('new-message', {
-        sender: payload.sender || '用户',
-        content: payload.content,
-        channel: 'lark'
-      });
-      // 歌词窗口显示
-      sendLyric({
-        text: payload.content,
-        type: 'user',
-        sender: payload.sender || '用户'
-      });
-      workLogger.logMessage(payload.sender || '用户', payload.content);
-      
-      // 🔔 Windows 系统通知
-      if (!mainWindow.isFocused()) {
-        new Notification({
-          title: payload.sender || '用户',
-          body: payload.content.substring(0, 100),
-          icon: path.join(__dirname, 'icon.png')
-        }).show();
-      }
-      
-      // 🔊 语音播报用户消息
-      if (payload.content && voiceSystem) {
-        const maxLength = 800; // 增加到800字,约2-3分钟
-        const voiceText = payload.content.substring(0, maxLength);
-        voiceSystem.speak(voiceText);
-      }
-    }
+
+    dispatchDesktopEvent(createUserMessageEvent({
+      sender: payload.sender || '用户',
+      content: payload.content,
+      channel: 'lark',
+      source: 'desktop-notifier'
+    }), {
+      notifyWhenBlurred: true
+    });
   });
   
   desktopNotifier.on('agent-response', (payload) => {
     console.log('🤖 AI回复:', payload);
-    if (mainWindow) {
-      // 🧹 清理 TTS 停顿标记（<#0.3#> 等），只给 MiniMax 用，不显示
-      const displayContent = (payload.content || '').replace(/<#[\d.]+#>/g, '');
-      
-      mainWindow.webContents.send('agent-response', {
-        content: displayContent,
-        emotion: payload.emotion || 'happy'
-      });
-      // 歌词窗口显示（等语音播完后消失）
-      const estimatedDuration = Math.max(6000, displayContent.length * 180 + 2000);
-      sendLyric({
-        text: displayContent,
-        type: 'agent',
-        sender: '小K',
-        duration: estimatedDuration
-      });
-      // 直接在这里触发语音,完整播放
-      // ⚠️ 语音用原始内容（保留 <#0.3#> 停顿标记给 MiniMax）
-      if (payload.content && voiceSystem) {
-        const maxLength = 800;
-        const voiceText = payload.content.substring(0, maxLength);
-        voiceSystem.speak(voiceText, { emotion: payload.emotion || 'calm' });
-      }
-      workLogger.log('message', `我回复: ${displayContent}`);
-    }
+
+    dispatchDesktopEvent(createAssistantMessageEvent({
+      sender: '小K',
+      content: payload.content,
+      emotion: payload.emotion || 'happy',
+      source: 'desktop-notifier'
+    }));
   });
   
   // 监听外部命令：打开模型管理面板
@@ -533,31 +765,25 @@ async function createWindow() {
 
   // 监听消息同步事件
   messageSync.on('new_message', (msg) => {
-    if (mainWindow) {
-      mainWindow.webContents.send('new-message', msg);
-      sendLyric({
-        text: msg.content, type: 'user', sender: msg.sender
-      });
-      workLogger.logMessage(msg.sender, msg.content);
-      console.log('📩 新消息:', msg.sender, '-', msg.content.substring(0, 50));
-      
-      // 🔥 添加语音播报用户消息
-      if (msg.content) {
-        voiceSystem.speak(msg.content.substring(0, 500)); // 用户消息也播报
-      }
-    }
+    dispatchDesktopEvent(createUserMessageEvent({
+      sender: msg.sender,
+      content: msg.content,
+      channel: msg.channel || 'lark',
+      source: 'message-sync'
+    }));
+    console.log('📩 新消息:', msg.sender, '-', msg.content.substring(0, 50));
   });
 
   mainWindow = new BrowserWindow({
-    width: 200,
-    height: 260,
-    x: petConfig.get('position')?.x || width - 200,
-    y: petConfig.get('position')?.y || height - 200,
+    width: 300,
+    height: 400,
+    x: petConfig.get('position')?.x || width - 300,
+    y: petConfig.get('position')?.y || height - 400,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: false,
+    resizable: true,
     hasShadow: false,
     webPreferences: {
       nodeIntegration: false,
@@ -566,7 +792,7 @@ async function createWindow() {
     }
   });
 
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile(getMainWindowEntry());
 
   // 渲染进程错误转发到主进程日志（防止静默失败）
   mainWindow.webContents.on('preload-error', (event, preloadPath, error) => {
@@ -679,6 +905,8 @@ async function createWindow() {
         }
       ]
     },
+    { type: 'separator' },
+    getAvatarModeMenuItem(),
     { type: 'separator' },
     {
       label: '🔧 服务管理',
@@ -1020,6 +1248,8 @@ function rebuildTrayMenu() {
         }
       ]
     },
+    { type: 'separator' },
+    getAvatarModeMenuItem(),
     { type: 'separator' },
     {
       label: '🔧 服务管理',
@@ -1455,6 +1685,55 @@ ipcMain.on('drag-pet', (event, { x, y, offsetX, offsetY }) => {
   petConfig.set('position', { x: newX, y: newY });
 });
 
+// 双击右键菜单（透明桌宠模式）
+ipcMain.on('show-pet-context-menu', () => {
+  if (!mainWindow) return;
+  const { Menu } = require('electron');
+  const template = [
+    { label: '💬 聊天', click: () => mainWindow.webContents.send('pet-menu-action', 'chat') },
+    { label: '📷 截图', click: async () => {
+      try {
+        const result = await screenshotSystem.takeScreenshot(mainWindow, 'menu');
+        if (result?.success) console.log('📸 截图完成');
+      } catch (e) { console.error('截图失败:', e); }
+    }},
+    { type: 'separator' },
+    { label: '🔊 语音开关', click: () => mainWindow.webContents.send('pet-menu-action', 'toggle-voice') },
+    { label: '🔄 切换模型', click: () => mainWindow.webContents.send('pet-menu-action', 'switch-model') },
+    { label: '📂 导入 VRM', click: async () => {
+      const result = await ipcMain.emit('avatar-select-vrm-menu') || null;
+      // Trigger VRM file dialog
+      mainWindow.webContents.send('pet-menu-action', 'import-vrm');
+    }},
+    { type: 'separator' },
+    { label: '🔵 切回球体模式', click: async () => {
+      petConfig.set('avatarMode', 'legacy');
+      mainWindow.loadFile('index.html');
+    }},
+    { label: '⚙️ 设置向导', click: () => mainWindow.webContents.send('pet-menu-action', 'setup-wizard') },
+    { type: 'separator' },
+    { label: '退出', click: () => require('electron').app.quit() }
+  ];
+  const menu = Menu.buildFromTemplate(template);
+  menu.popup({ window: mainWindow });
+});
+
+// 滚轮缩放桌宠窗口
+ipcMain.on('pet-resize', (event, { deltaY }) => {
+  if (!mainWindow) return;
+  const [w, h] = mainWindow.getSize();
+  const step = deltaY > 0 ? -20 : 20;
+  const newW = Math.max(150, Math.min(600, w + step));
+  const newH = Math.max(200, Math.min(800, h + Math.round(step * 4 / 3)));
+  mainWindow.setSize(newW, newH);
+});
+
+ipcMain.on('pet-rotate', (event, { angle }) => {
+  if (typeof angle === 'number' && isFinite(angle)) {
+    petConfig.set('modelRotationY', angle);
+  }
+});
+
 // 三击查看历史消息
 ipcMain.handle('show-history', async () => {
   try {
@@ -1483,8 +1762,17 @@ ipcMain.handle('show-history', async () => {
 let openclawSendQueue = Promise.resolve();
 ipcMain.handle('openclaw-send', async (event, message) => {
   const run = async () => {
-    workLogger.logMessage('用户', message);
     workLogger.logTask(`处理消息: ${message}`);
+
+    dispatchDesktopEvent(createUserMessageEvent({
+      sender: '用户',
+      content: message,
+      channel: 'desktop',
+      source: 'desktop-input'
+    }), {
+      notifyWhenBlurred: false,
+      suppressVoice: true
+    });
 
     let response = await openclawClient.sendMessage(message);
 
@@ -1497,7 +1785,13 @@ ipcMain.handle('openclaw-send', async (event, message) => {
 
     if (response && !response.startsWith('请求失败') && !response.startsWith('连接失败') && !response.startsWith('错误')) {
       workLogger.logSuccess('消息发送成功');
-      workLogger.log('message', `AI回复: ${response.substring(0, 100)}`);
+
+      dispatchDesktopEvent(createAssistantMessageEvent({
+        sender: '小K',
+        content: response,
+        emotion: 'happy',
+        source: 'openclaw-direct'
+      }));
     } else {
       workLogger.logError(response || '发送失败');
     }
@@ -1517,12 +1811,32 @@ ipcMain.handle('openclaw-status', async () => {
   return { connected, status };
 });
 
+ipcMain.handle('backend-catalog', async (event, context = {}) => {
+  return backendManager ? backendManager.getCatalog(context) : [];
+});
+
+ipcMain.handle('backend-status', async (event, context = {}) => {
+  return backendManager ? backendManager.getActiveBackendStatus(context) : null;
+});
+
+ipcMain.handle('backend-set-active', async (event, backendId, options = {}) => {
+  return backendManager ? backendManager.setActiveBackend(backendId, options) : { success: false, error: 'not_initialized' };
+});
+
+ipcMain.handle('backend-send', async (event, message, context = {}) => {
+  return backendManager ? backendManager.sendViaActiveBackend(message, context) : { success: false, error: 'not_initialized' };
+});
+
 // 🎙️ 语音控制
 ipcMain.handle('set-voice-enabled', async (event, enabled) => {
   voiceSystem.toggle(enabled);
   petConfig.set('voiceEnabled', enabled);
   console.log(`🔊 语音${enabled ? '开启' : '关闭'}`);
   return true;
+});
+
+ipcMain.handle('voice-state', async () => {
+  return Boolean(petConfig?.get('voiceEnabled'));
 });
 
 // 🔍 TTS 依赖检测
@@ -1688,6 +2002,29 @@ ipcMain.handle('model-next', async () => {
     error: model ? null : 'switch_failed',
     resolvedApi: model?.api || null,
     model: model || null
+  };
+});
+
+ipcMain.handle('avatar-state', async () => {
+  return getAvatarState();
+});
+
+ipcMain.handle('avatar-set-mode', async (event, mode) => {
+  return applyAvatarMode(mode);
+});
+
+ipcMain.handle('avatar-select-vrm', async () => {
+  return selectVrmFile();
+});
+
+ipcMain.handle('avatar-clear-vrm', async () => {
+  petConfig.set('vrmFilePath', '');
+  if (tray) {
+    rebuildTrayMenu();
+  }
+  return {
+    success: true,
+    ...getAvatarState()
   };
 });
 

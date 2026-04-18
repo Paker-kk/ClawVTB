@@ -2,12 +2,24 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Whitelisted IPC channels for security
 const VALID_SEND_CHANNELS = [
-  'drag-pet'
+  'drag-pet',
+  'show-pet-context-menu',
+  'pet-resize',
+  'pet-rotate'
 ];
 
 const VALID_INVOKE_CHANNELS = [
   'show-history',
   'set-voice-enabled',
+  'voice-state',
+  'backend-catalog',
+  'backend-status',
+  'backend-set-active',
+  'backend-send',
+  'avatar-state',
+  'avatar-set-mode',
+  'avatar-select-vrm',
+  'avatar-clear-vrm',
   'model-next',
   'take-screenshot',
   'openclaw-send',

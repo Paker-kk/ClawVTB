@@ -22,7 +22,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows_|_macOS-0078D6?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/kk43994/kkclaw)
 
-[🎥 **在线演示**](https://kk43994.github.io/kkclaw/) | [📦 **下载最新版**](https://github.com/kk43994/kkclaw/releases) | [📖 **配置教程**](docs/CONFIGURATION-GUIDE.md) | [💬 **加入社群**](#-社群)
+[🎥 **在线演示**](https://kk43994.github.io/kkclaw/) | [📦 **下载最新版**](https://github.com/kk43994/kkclaw/releases) | [📖 **配置教程**](docs/CONFIGURATION-GUIDE.md) | [🚀 **小白快速开始**](docs/BEGINNER-QUICKSTART.md) | [💬 **加入社群**](#-社群)
 
 </div>
 
@@ -158,6 +158,19 @@
 > 发行版适合只想快速体验的用户，长期使用推荐源码运行。
 
 ### 安装说明
+
+### 🧃 小白路线
+
+如果你只是想尽快把桌宠跑起来，并且顺手接好 VRM、Copilot、Codex，先看：
+
+- [小白快速开始](docs/BEGINNER-QUICKSTART.md)
+
+当前 Setup Wizard 已经会在环境预检页额外检查：
+
+- VS Code
+- GitHub Copilot / Copilot Chat
+- Codex CLI
+- VRM 身体是否已就绪
 
 #### Windows
 1. 下载 `.exe` 安装程序

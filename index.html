@@ -281,6 +281,9 @@
         <div class="tool-icon model-switch-btn" id="btnModelSwitch" title="切换模型" onclick="cycleModel()">
             <span id="modelBadge" style="font-size:9px;font-weight:700;color:#666;user-select:none;">OP</span>
         </div>
+        <div class="tool-icon model-switch-btn" id="btnAvatarMode" title="切换到 3D 原型" onclick="switchToAvatarMode()">
+            <span style="font-size:9px;font-weight:700;color:#666;user-select:none;">3D</span>
+        </div>
     </div>
 
     <!-- 输入条 -->
@@ -1275,6 +1278,12 @@ function flashModelSwitch(color) {
         pet.style.filter = '';
         pet.style.transition = '';
     }, 400);
+}
+
+async function switchToAvatarMode() {
+    if (!electronAPI) return;
+    setMood('thinking');
+    await electronAPI.invoke('avatar-set-mode', 'vrm-prototype');
 }
 
 // 初始化时获取当前模型

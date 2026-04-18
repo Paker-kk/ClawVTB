@@ -72,3 +72,6 @@ ENGAGEMENT-*.md
 # 📦 打包文件
 clawhub-package/
 
+# 🎭 VRM 模型文件（体积大，不入库）
+models/vrm/*.vrm
+

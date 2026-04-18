@@ -1226,7 +1226,7 @@ async function renderStep(step) {
 // ─── Step 0 (-1): 环境预检 ───────────────────────
 async function renderEnvCheck() {
   await addBubble('你好呀~ 我是小K！(^_^) 欢迎使用 KKClaw 桌面宠物~');
-  await addBubble('在正式配置之前，让我先帮你检测一下环境依赖，确保一切都准备好了！');
+  await addBubble('在正式配置之前，让我先帮你检测一下环境依赖，顺手把 VS Code、Copilot、Codex 和 VRM 这些小白最容易卡住的地方也一起看掉！');
 
   addCard(`
     <h3>🔍 环境预检</h3>
@@ -1253,6 +1253,41 @@ async function renderEnvCheck() {
     <div class="check-item" id="env-python">
       <span class="check-icon">⏳</span>
       <span class="check-name">Python 3.6+（可选，用于 EdgeTTS/CosyVoice）</span>
+      <span class="check-status">检测中...</span>
+    </div>
+
+    <div class="note-box" style="margin-top:12px;">
+      <strong>新手速通模式</strong><br>
+      桌宠主链路当前还是依赖 OpenClaw Gateway。下面这 4 项是小K 帮你补的“Coding 桌宠增强包”：VS Code、Copilot、Codex CLI 和 VRM 身体。
+    </div>
+
+    <div class="check-item" id="env-vscode">
+      <span class="check-icon">⏳</span>
+      <span class="check-name">VS Code 命令行入口</span>
+      <span class="check-status">检测中...</span>
+    </div>
+
+    <div class="check-item" id="env-copilot">
+      <span class="check-icon">⏳</span>
+      <span class="check-name">GitHub Copilot 扩展</span>
+      <span class="check-status">检测中...</span>
+    </div>
+
+    <div class="check-item" id="env-codex">
+      <span class="check-icon">⏳</span>
+      <span class="check-name">Codex CLI</span>
+      <span class="check-status">检测中...</span>
+    </div>
+
+    <div class="check-item" id="env-claude">
+      <span class="check-icon">⏳</span>
+      <span class="check-name">Claude Code CLI</span>
+      <span class="check-status">检测中...</span>
+    </div>
+
+    <div class="check-item" id="env-vrm">
+      <span class="check-icon">⏳</span>
+      <span class="check-name">VRM 桌宠身体</span>
       <span class="check-status">检测中...</span>
     </div>
 
@@ -1321,6 +1356,79 @@ async function renderEnvCheck() {
       r.python.ok ? null : {
         label: '前往下载 Python',
         action: () => wizardAPI.invoke('open-external', 'https://www.python.org/downloads/')
+      }
+    );
+
+    const tools = r.tools || {};
+    const copilot = tools.copilot || {};
+    const codex = tools.codex || {};
+    const claudeCode = tools.claudeCode || {};
+    const vrm = r.vrm || {};
+
+    setEnvItem('env-vscode',
+      tools.vscode?.ok ? true : 'warn',
+      tools.vscode?.ok ? 'VS Code 已检测到 ✓' : '未检测到 VS Code，请先安装编辑器',
+      tools.vscode?.ok ? null : {
+        label: '下载 VS Code',
+        action: () => wizardAPI.invoke('open-external', 'https://code.visualstudio.com/Download')
+      }
+    );
+
+    const copilotText = copilot.ok
+      ? 'Copilot 与 Copilot Chat 已安装 ✓'
+      : copilot.hasCopilot
+        ? '已装 Copilot，但还缺 Copilot Chat'
+        : '未检测到 Copilot 扩展';
+
+    setEnvItem('env-copilot',
+      copilot.ok ? true : 'warn',
+      copilotText,
+      copilot.ok ? null : (tools.vscode?.canInstallExtensions
+        ? {
+            label: '一键安装 Copilot',
+            action: (btn) => installCopilotQuick(btn)
+          }
+        : {
+            label: '打开 Copilot 页面',
+            action: () => wizardAPI.invoke('open-external', 'https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat')
+          })
+    );
+
+    setEnvItem('env-codex',
+      codex.ok ? true : 'warn',
+      codex.ok ? `Codex CLI 已安装${codex.version ? ` (${codex.version})` : ''} ✓` : '未检测到 Codex CLI',
+      codex.ok ? null : (r.node.ok
+        ? {
+            label: '一键安装 Codex',
+            action: (btn) => installCodexQuick(btn),
+            cmdHint: 'npm install -g @openai/codex'
+          }
+        : {
+            label: '查看 Codex 文档',
+            action: () => wizardAPI.invoke('open-external', 'https://github.com/openai/codex')
+          })
+    );
+
+    setEnvItem('env-claude',
+      claudeCode.ok ? true : 'warn',
+      claudeCode.ok ? `Claude Code 已安装${claudeCode.version ? ` (${claudeCode.version})` : ''} ✓` : '未检测到 Claude Code CLI',
+      claudeCode.ok ? null : {
+        label: '打开 Claude 安装页',
+        action: () => wizardAPI.invoke('open-external', 'https://code.claude.com/docs/en/overview')
+      }
+    );
+
+    const vrmText = vrm.ok
+      ? `${vrm.activeVrmName} (${vrm.activeVrmSource === 'custom' ? '已导入' : '项目默认'}) ✓`
+      : '还没有导入 VRM，后面桌宠会先用默认占位体';
+
+    setEnvItem('env-vrm',
+      vrm.ok ? true : 'warn',
+      vrmText,
+      vrm.ok ? null : {
+        label: '选择 VRM',
+        action: (btn) => selectWizardVrm(btn),
+        cmdHint: vrm.projectDir || 'models/vrm'
       }
     );
 
@@ -1408,6 +1516,81 @@ function cmdBlock(cmd, lang = '') {
   `;
 }
 
+async function installCopilotQuick(btn) {
+  const original = btn.textContent;
+  btn.textContent = '安装中...';
+  btn.disabled = true;
+  await addBubble('小K 正在帮你安装 Copilot 和 Copilot Chat 扩展，请稍等一下下~');
+
+  try {
+    const result = await wizardAPI.invoke('wizard-install-copilot');
+    if (result.success) {
+      await addBubble('Copilot 扩展装好啦！接下来你只要在 VS Code 里登录 GitHub 账号就可以开始用了 ✨');
+      await renderEnvCheck();
+      return;
+    }
+
+    await addBubble(`安装 Copilot 失败了：${friendlyError(result.error)} (>_<)`);
+  } catch (error) {
+    await addBubble(`安装 Copilot 时出错：${friendlyError(error.message)} (>_<)`);
+  }
+
+  btn.textContent = original;
+  btn.disabled = false;
+}
+
+async function installCodexQuick(btn) {
+  const original = btn.textContent;
+  btn.textContent = '安装中...';
+  btn.disabled = true;
+  await addBubble('小K 正在安装 Codex CLI，装好后你就能在终端里直接敲 codex 啦~');
+
+  try {
+    const result = await wizardAPI.invoke('wizard-install-codex');
+    if (result.success) {
+      await addBubble('Codex CLI 安装成功！后面登录 OpenAI / ChatGPT 账号就能接着用了。');
+      await renderEnvCheck();
+      return;
+    }
+
+    await addBubble(`安装 Codex 失败了：${friendlyError(result.error)} (>_<)`);
+  } catch (error) {
+    await addBubble(`安装 Codex 时出错：${friendlyError(error.message)} (>_<)`);
+  }
+
+  btn.textContent = original;
+  btn.disabled = false;
+}
+
+async function selectWizardVrm(btn) {
+  const original = btn.textContent;
+  btn.textContent = '选择中...';
+  btn.disabled = true;
+
+  try {
+    const result = await wizardAPI.invoke('wizard-select-vrm');
+    if (result.canceled) {
+      btn.textContent = original;
+      btn.disabled = false;
+      return;
+    }
+
+    if (result.success) {
+      const vrmName = result.vrm?.activeVrmName || '你的 VRM';
+      await addBubble(`VRM 导入完成啦！现在桌宠会优先使用 ${vrmName} 作为身体 ✨`);
+      await renderEnvCheck();
+      return;
+    }
+
+    await addBubble(`导入 VRM 失败了：${friendlyError(result.error)} (>_<)`);
+  } catch (error) {
+    await addBubble(`选择 VRM 时出错：${friendlyError(error.message)} (>_<)`);
+  }
+
+  btn.textContent = original;
+  btn.disabled = false;
+}
+
 function setEnvItem(id, status, text, action) {
   const item = document.getElementById(id);
   if (!item) return;
@@ -1465,6 +1648,13 @@ function updateEnvSummary(r, gatewayJustStarted = false) {
 
   const gatewayOk = gatewayJustStarted || r.gateway.ok;
   const coreOk = r.node.ok && r.openclaw.ok && gatewayOk;
+  const optionalMissing = [];
+
+  if (!r.tools?.vscode?.ok) optionalMissing.push('VS Code');
+  if (!r.tools?.copilot?.ok) optionalMissing.push('Copilot');
+  if (!r.tools?.codex?.ok) optionalMissing.push('Codex CLI');
+  if (!r.tools?.claudeCode?.ok) optionalMissing.push('Claude Code');
+  if (!r.vrm?.ok) optionalMissing.push('VRM 身体');
 
   summary.classList.remove('hidden');
 
@@ -1472,13 +1662,14 @@ function updateEnvSummary(r, gatewayJustStarted = false) {
     summary.style.background = '#e8f5e9';
     summary.style.borderColor = 'var(--grass-light)';
     summary.innerHTML = `
-      <strong>✅ 环境检测通过！</strong> 可以继续配置了~
+      <strong>✅ 基础运行环境通过！</strong> 现在已经可以继续配置桌宠主链路了~
       ${!r.python.ok ? '<br><span style="color:#f57f17;">⚠️ Python 未安装，但这是可选的。如果需要 EdgeTTS 或 CosyVoice，请先安装 Python。</span>' : ''}
+      ${optionalMissing.length ? `<br><span style="color:var(--text-medium);">新手增强包还差：${optionalMissing.join('、')}。这些不会阻止桌宠启动，但会影响“下载即玩”的顺滑度。</span>` : '<br><span style="color:var(--green);">VS Code、Copilot、Codex 和 VRM 也都就绪了，已经很接近一键开玩啦！</span>'}
     `;
     actions.classList.remove('hidden');
     actions.innerHTML = `
       <div class="btn-row">
-        <button class="btn btn-primary" onclick="goNext()">下一步：配置 Gateway →</button>
+        <button class="btn btn-primary" onclick="nextStep()">下一步：配置 Gateway →</button>
       </div>
     `;
   } else {
@@ -1496,7 +1687,7 @@ function updateEnvSummary(r, gatewayJustStarted = false) {
     actions.innerHTML = `
       <div class="btn-row">
         <button class="btn btn-test" onclick="renderEnvCheck()">🔄 重新检测</button>
-        ${(r.node.ok && r.openclaw.ok) ? '<button class="btn btn-primary" onclick="goNext()">跳过，继续配置 →</button>' : ''}
+        ${(r.node.ok && r.openclaw.ok) ? '<button class="btn btn-primary" onclick="nextStep()">跳过，继续配置 →</button>' : ''}
       </div>
     `;
   }
