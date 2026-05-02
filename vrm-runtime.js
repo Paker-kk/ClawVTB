@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRMLoaderPlugin, VRMUtils } from 'https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.1/lib/three-vrm.module.js';
+import { VRMLoaderPlugin, VRMUtils } from './node_modules/@pixiv/three-vrm/lib/three-vrm.module.js';
 
 const MOOD_PRESETS = {
   idle:      { primary: 0xff8b5e, secondary: 0xffc4ad, halo: 0xff9f73, scale: 1.0,  defaultExpr: 'normal' },

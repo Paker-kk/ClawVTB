@@ -26,7 +26,7 @@ class PetConfig {
                     web: 'claude-code'
                 }
             },
-            avatarMode: 'legacy',
+            avatarMode: 'vrm-prototype',
             vrmFilePath: '',
             voiceEnabled: true,
             lastSeen: Date.now(),

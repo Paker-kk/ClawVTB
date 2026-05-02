@@ -312,7 +312,6 @@ let backendManager; // 🧭 多后端管理器
 let chaseController; // 🏃 桌面大鹅追逐控制器
 
 const AVATAR_MODES = Object.freeze({
-  LEGACY: 'legacy',
   VRM_PROTOTYPE: 'vrm-prototype'
 });
 
@@ -337,8 +336,8 @@ function getBundledVrmPath() {
   }
 }
 
-function normalizeAvatarMode(mode) {
-  return Object.values(AVATAR_MODES).includes(mode) ? mode : AVATAR_MODES.LEGACY;
+function normalizeAvatarMode() {
+  return AVATAR_MODES.VRM_PROTOTYPE;
 }
 
 function getAvatarState() {
@@ -374,13 +373,11 @@ function getAvatarState() {
 }
 
 function getMainWindowEntry() {
-  return getAvatarState().avatarMode === AVATAR_MODES.VRM_PROTOTYPE
-    ? 'index-vrm.html'
-    : 'index.html';
+  return 'index-vrm.html';
 }
 
-async function applyAvatarMode(mode) {
-  const nextMode = normalizeAvatarMode(mode);
+async function applyAvatarMode() {
+  const nextMode = normalizeAvatarMode();
   petConfig.set('avatarMode', nextMode);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -442,21 +439,12 @@ function getAvatarModeMenuItem() {
       : '📦 当前未选择 VRM';
 
   return {
-    label: `🧬 角色模式: ${avatarState.avatarMode === AVATAR_MODES.VRM_PROTOTYPE ? '3D原型' : '经典球体'}`,
+    label: '🧬 VRM 角色',
     submenu: [
-      {
-        label: '🦞 经典球体',
-        type: 'radio',
-        checked: avatarState.avatarMode === AVATAR_MODES.LEGACY,
-        click: async () => {
-          await applyAvatarMode(AVATAR_MODES.LEGACY);
-          showServiceNotification('角色模式已切换', '已切换到经典球体');
-        }
-      },
       {
         label: '🐾 3D原型 / VRM',
         type: 'radio',
-        checked: avatarState.avatarMode === AVATAR_MODES.VRM_PROTOTYPE,
+        checked: true,
         click: async () => {
           await applyAvatarMode(AVATAR_MODES.VRM_PROTOTYPE);
           showServiceNotification('角色模式已切换', avatarState.hasCustomVrm ? `已载入 ${avatarState.vrmFileName}` : '已切换到 BACAT 3D 原型');
@@ -581,6 +569,7 @@ async function createWindow() {
   // 加载配置
   petConfig = new PetConfig();
   await petConfig.load();
+  petConfig.set('avatarMode', AVATAR_MODES.VRM_PROTOTYPE);
   
   // 初始化所有系统
   openclawClient = new OpenClawClient();
@@ -1743,7 +1732,7 @@ function reopenSetupWizard() {
   setupWizardWindow.on('closed', () => { setupWizardWindow = null; });
 }
 
-// 屏幕边界约束 — 防止球体跑到屏幕外
+// 屏幕边界约束 — 防止 VRM 桌宠跑到屏幕外
 function clampToScreen(x, y, winWidth = 200, winHeight = 260) {
   const displays = screen.getAllDisplays();
   // 获取所有显示器的总边界
@@ -1755,8 +1744,7 @@ function clampToScreen(x, y, winWidth = 200, winHeight = 260) {
     maxX = Math.max(maxX, dx + dw);
     maxY = Math.max(maxY, dy + dh);
   }
-  // 球体在窗口中居中，约67px大小，窗口200x260
-  // 确保窗口不超出屏幕边界（留少量边距让球体始终可见可拖）
+  // 确保窗口不超出屏幕边界（留少量边距让 VRM 始终可见可拖）
   const padding = 10; // 窗口边缘到屏幕边缘的最小距离
   const clampedX = Math.max(minX - padding, Math.min(x, maxX - winWidth + padding));
   const clampedY = Math.max(minY - padding, Math.min(y, maxY - winHeight + padding));
@@ -1771,7 +1759,7 @@ ipcMain.on('drag-pet', (event, { x, y, offsetX, offsetY }) => {
   const rawY = y - (offsetY || 80);
   const { x: newX, y: newY } = clampToScreen(rawX, rawY);
   mainWindow.setPosition(newX, newY);
-  // 歌词窗口跟随（在球体上方）
+  // 歌词窗口跟随（在 VRM 上方）
   if (lyricsWindow) {
     lyricsWindow.setPosition(newX - 100, newY - 110);
   }
@@ -1784,25 +1772,11 @@ ipcMain.on('show-pet-context-menu', () => {
   const { Menu } = require('electron');
   const template = [
     { label: '💬 聊天', click: () => mainWindow.webContents.send('pet-menu-action', 'chat') },
-    { label: '📷 截图', click: async () => {
-      try {
-        const result = await screenshotSystem.takeScreenshot(mainWindow, 'menu');
-        if (result?.success) console.log('📸 截图完成');
-      } catch (e) { console.error('截图失败:', e); }
-    }},
+    { label: '📷 截图', click: () => mainWindow.webContents.send('pet-menu-action', 'screenshot') },
     { type: 'separator' },
     { label: '🔊 语音开关', click: () => mainWindow.webContents.send('pet-menu-action', 'toggle-voice') },
     { label: '🔄 切换模型', click: () => mainWindow.webContents.send('pet-menu-action', 'switch-model') },
-    { label: '📂 导入 VRM', click: async () => {
-      const result = await ipcMain.emit('avatar-select-vrm-menu') || null;
-      // Trigger VRM file dialog
-      mainWindow.webContents.send('pet-menu-action', 'import-vrm');
-    }},
-    { type: 'separator' },
-    { label: '🔵 切回球体模式', click: async () => {
-      petConfig.set('avatarMode', 'legacy');
-      mainWindow.loadFile('index.html');
-    }},
+    { label: '📂 导入 VRM', click: () => mainWindow.webContents.send('pet-menu-action', 'import-vrm') },
     { label: '⚙️ 设置向导', click: () => mainWindow.webContents.send('pet-menu-action', 'setup-wizard') },
     { type: 'separator' },
     { label: '退出', click: () => require('electron').app.quit() }
@@ -2125,10 +2099,6 @@ ipcMain.handle('model-next', async () => {
 
 ipcMain.handle('avatar-state', async () => {
   return getAvatarState();
-});
-
-ipcMain.handle('avatar-set-mode', async (event, mode) => {
-  return applyAvatarMode(mode);
 });
 
 ipcMain.handle('avatar-select-vrm', async () => {
