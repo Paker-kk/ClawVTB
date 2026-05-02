@@ -44,6 +44,8 @@ let dragState = null;
 stage.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   dragState = { screenX: e.screenX, screenY: e.screenY, offsetX: e.clientX, offsetY: e.clientY, moved: false };
+  // Pause chase during drag
+  if (electronAPI) electronAPI.send('chase-pause');
 });
 
 document.addEventListener('mousemove', (e) => {
@@ -66,6 +68,14 @@ document.addEventListener('mouseup', () => {
   if (wasDrag) {
     stage.dataset.suppressClick = '1';
     setTimeout(() => delete stage.dataset.suppressClick, 50);
+    // Resume chase after drag
+    if (electronAPI) {
+      electronAPI.send('chase-resume');
+      electronAPI.send('pet-activity', {
+        type: 'pet-dragged',
+        details: { description: 'was dragged by the user' }
+      });
+    }
   }
 });
 
@@ -74,6 +84,12 @@ document.addEventListener('mouseup', () => {
 stage.addEventListener('click', () => {
   if (stage.dataset.suppressClick) return;
   avatarStage.poke();
+  if (electronAPI) {
+    electronAPI.send('pet-activity', {
+      type: 'pet-poked',
+      details: { description: 'was poked by the user' }
+    });
+  }
 });
 
 stage.addEventListener('dblclick', () => {
@@ -120,6 +136,108 @@ if (electronAPI) {
     const mood = normalizeStatus(status);
     avatarStage.setMood(mood, mood === 'offline' ? 0 : 900);
   });
+
+  // ── Chase state updates from main process ──
+  electronAPI.on('chase-state', (chaseState) => {
+    if (!chaseState) return;
+    avatarStage.setChaseState(chaseState);
+
+    // Map chase mode to expression
+    const modeExprMap = {
+      IDLE: null,
+      CURIOUS: 'curious',
+      CHASING: 'happy',
+      AGGRESSIVE: 'superHappy',
+      TIRED: 'sleepy',
+    };
+    const expr = modeExprMap[chaseState.mode];
+    if (expr) {
+      avatarStage.setExpression(expr, 'smooth');
+    } else {
+      avatarStage.clearExpression();
+    }
+  });
+
+  // ── Commands from OpenClaw (routed through main process) ──
+  electronAPI.on('pet-command', (cmd) => {
+    if (!cmd) return;
+    switch (cmd.command) {
+      case 'do-trick':
+        executeTrick(cmd.args?.name || 'wave');
+        break;
+      case 'say-something':
+        showTextBubble(cmd.args?.text || '');
+        break;
+      default:
+        console.log('[Pet] Unknown command:', cmd.command);
+    }
+  });
+}
+
+/* ── Trick animations ── */
+
+function executeTrick(name) {
+  const tricks = {
+    wave: () => {
+      avatarStage.setExpression('superHappy', 'fast');
+      setTimeout(() => avatarStage.setExpression('wink', 'fast'), 500);
+      setTimeout(() => avatarStage.clearExpression(), 1500);
+    },
+    spin: () => {
+      avatarStage.adjustModelRotation(Math.PI * 2);
+    },
+    jump: () => {
+      avatarStage.poke();
+      avatarStage.setExpression('surprised', 'fast');
+      setTimeout(() => avatarStage.clearExpression(), 800);
+    },
+    playDead: () => {
+      avatarStage.setExpression('dead', 'slow');
+      setTimeout(() => avatarStage.clearExpression(), 3000);
+    },
+    dance: () => {
+      const steps = [
+        ['happy', 'fast'], ['superHappy', 'fast'], ['giggle', 'smooth'],
+        ['love', 'smooth'], ['superHappy', 'fast'], ['happy', 'smooth']
+      ];
+      let delay = 0;
+      for (const [expr, speed] of steps) {
+        setTimeout(() => avatarStage.setExpression(expr, speed), delay);
+        delay += 400;
+      }
+      setTimeout(() => avatarStage.clearExpression(), delay);
+    },
+    bow: () => {
+      avatarStage.setExpression('softSmile', 'smooth');
+      avatarStage.setExpression('lookDown', 'smooth');
+      setTimeout(() => avatarStage.clearExpression(), 2000);
+    },
+  };
+  const trick = tricks[name];
+  if (trick) trick();
+}
+
+function showTextBubble(text) {
+  let bubble = document.getElementById('pet-speech-bubble');
+  if (!bubble) {
+    bubble = document.createElement('div');
+    bubble.id = 'pet-speech-bubble';
+    bubble.style.cssText = `
+      position: absolute; top: 5%; left: 50%; transform: translateX(-50%);
+      background: rgba(255,255,255,0.92); color: #222; padding: 6px 14px;
+      border-radius: 12px; font-size: 13px; max-width: 85%; text-align: center;
+      pointer-events: none; z-index: 10; transition: opacity 0.25s;
+      white-space: pre-wrap; word-wrap: break-word;
+      font-family: -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
+    `;
+    document.body.appendChild(bubble);
+  }
+  bubble.textContent = text;
+  bubble.style.opacity = '1';
+  clearTimeout(bubble._timeout);
+  bubble._timeout = setTimeout(() => {
+    bubble.style.opacity = '0';
+  }, Math.max(3000, text.length * 80));
 }
 
 /* ── Avatar state ── */

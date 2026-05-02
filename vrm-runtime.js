@@ -324,6 +324,18 @@ export class AvatarStage {
     this.modelBaseRotationY = 0;
     this.userPointerTimeout = null;
 
+    // Chase state (Desktop Goose visual feedback)
+    this.chaseState = {
+      active: false,
+      mode: 'IDLE',
+      directionX: 0,
+      directionY: 0,
+      speed: 0,
+      distance: 0,
+    };
+    this.chaseLeanTarget = { x: 0, z: 0 };
+    this.chaseLeanCurrent = { x: 0, z: 0 };
+
     this.createLighting();
     this.createStageDecor();
     this.placeholder = this.createPlaceholderMascot();
@@ -530,6 +542,21 @@ export class AvatarStage {
     this.setMood('happy', 1100);
   }
 
+  /**
+   * Set the current chase state for Desktop Goose visual feedback.
+   * @param {{ mode: string, directionX: number, directionY: number, speed: number, distance: number }} state
+   */
+  setChaseState(state) {
+    if (!state) return;
+    Object.assign(this.chaseState, state);
+    this.chaseState.active = state.mode !== 'IDLE';
+
+    // Convert movement direction (-1..1) to body lean targets
+    const leanScale = Math.min(1, (state.speed || 0) / 5);
+    this.chaseLeanTarget.x = (state.directionX || 0) * 0.12 * leanScale;
+    this.chaseLeanTarget.z = (state.directionY || 0) * 0.06 * leanScale;
+  }
+
   scheduleBlink() {
     const r = Math.random();
     if (r < 0.5) {
@@ -698,9 +725,11 @@ export class AvatarStage {
 
     const tailWave = Math.sin(elapsed * 2.4) * 0.12 + Math.sin(elapsed * 1.1) * 0.04;
 
-    // Head target with eye wander
-    const wanderX = this.isUserPointing ? 0 : this.wanderOffsetX;
-    const wanderY = this.isUserPointing ? 0 : this.wanderOffsetY;
+    // Head target with eye wander (biased toward chase direction during chasing)
+    const chaseBiasX = this.chaseState.active ? this.chaseState.directionX * 0.3 : 0;
+    const chaseBiasY = this.chaseState.active ? this.chaseState.directionY * 0.15 : 0;
+    const wanderX = this.isUserPointing ? 0 : (this.wanderOffsetX + chaseBiasX);
+    const wanderY = this.isUserPointing ? 0 : (this.wanderOffsetY + chaseBiasY);
     const targetHeadY = this.pointer.x * 0.28 + wanderX * 0.4;
     const targetHeadX = this.pointer.y * 0.14 + wanderY * 0.3;
     const speakingPulse = this.mood === 'speaking' ? (Math.sin(elapsed * 12.0) * 0.5 + 0.5) * 0.16 : 0;
@@ -709,6 +738,18 @@ export class AvatarStage {
     this.placeholder.pivot.position.x = THREE.MathUtils.lerp(this.placeholder.pivot.position.x || 0, fidgetX, 0.05);
     this.placeholder.pivot.rotation.z = THREE.MathUtils.lerp(this.placeholder.pivot.rotation.z || 0, fidgetR, 0.04);
     this.placeholder.pivot.scale.setScalar(THREE.MathUtils.lerp(this.placeholder.pivot.scale.x, preset.scale + this.pokeEnergy * 0.04, 0.1));
+
+    // Chase movement lean for placeholder mascot
+    if (this.chaseState.active) {
+      this.chaseLeanCurrent.x = THREE.MathUtils.lerp(this.chaseLeanCurrent.x || 0, this.chaseLeanTarget.x || 0, 0.12);
+      this.chaseLeanCurrent.z = THREE.MathUtils.lerp(this.chaseLeanCurrent.z || 0, this.chaseLeanTarget.z || 0, 0.12);
+      this.placeholder.pivot.rotation.z += this.chaseLeanCurrent.x * 0.5;
+      this.placeholder.pivot.rotation.x += this.chaseLeanCurrent.z * 0.5;
+      // Chase speed adds to bob amplitude
+      const chaseBob = this.chaseState.speed * 0.015;
+      this.placeholder.pivot.position.y += chaseBob;
+    }
+
     this.placeholder.headPivot.rotation.y = THREE.MathUtils.lerp(this.placeholder.headPivot.rotation.y, targetHeadY, 0.1);
     this.placeholder.headPivot.rotation.x = THREE.MathUtils.lerp(this.placeholder.headPivot.rotation.x, targetHeadX + speakingPulse * 0.12, 0.12);
     this.placeholder.tail.rotation.y = THREE.MathUtils.lerp(this.placeholder.tail.rotation.y, tailWave, 0.12);
@@ -766,7 +807,7 @@ export class AvatarStage {
       0.08
     );
 
-    // Bone micro-animations (spine sway + breathing lean)
+    // Bone micro-animations (spine sway + breathing lean + chase lean)
     const humanoid = this.currentVrm.humanoid;
     if (humanoid) {
       const spineBone = humanoid.getNormalizedBoneNode('spine');
@@ -776,7 +817,25 @@ export class AvatarStage {
           + (this.deepBreathPhase > 0 ? Math.sin(this.deepBreathPhase) * 0.012 : 0);
         spineBone.rotation.z = THREE.MathUtils.lerp(spineBone.rotation.z, boneSwayZ, 0.04);
         spineBone.rotation.x = THREE.MathUtils.lerp(spineBone.rotation.x, boneLeanX, 0.04);
+
+        // Chase movement lean (Desktop Goose)
+        if (this.chaseState.active) {
+          this.chaseLeanCurrent.x = THREE.MathUtils.lerp(this.chaseLeanCurrent.x, this.chaseLeanTarget.x, 0.12);
+          this.chaseLeanCurrent.z = THREE.MathUtils.lerp(this.chaseLeanCurrent.z, this.chaseLeanTarget.z, 0.12);
+          spineBone.rotation.z += this.chaseLeanCurrent.x;
+          spineBone.rotation.x += this.chaseLeanCurrent.z;
+        }
       }
+    }
+
+    // Chase movement: whole model lean
+    if (this.chaseState.active) {
+      const leanAmount = this.chaseState.speed * 0.06;
+      this.currentVrm.scene.rotation.z = THREE.MathUtils.lerp(
+        this.currentVrm.scene.rotation.z || 0,
+        this.chaseState.directionX * leanAmount,
+        0.1
+      );
     }
 
     // ── Expression system: merge mood defaults, setExpression() overrides, blink, and speech ──

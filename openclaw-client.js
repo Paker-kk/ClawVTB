@@ -206,6 +206,42 @@ class OpenClawClient {
     }
 
     /**
+     * Send pet activity context to OpenClaw (fire-and-forget).
+     * Informs the AI about the pet's current state without requiring a response.
+     */
+    async sendPetContext(description) {
+        try {
+            const gatewayHost = this._getHost();
+            const gatewayToken = this._getToken();
+
+            const response = await fetch(`${gatewayHost}/v1/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${gatewayToken}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: 'openclaw:main',
+                    messages: [
+                        { role: 'system', content: `Desktop pet status update: ${description}` }
+                    ],
+                    stream: false,
+                    max_tokens: 1,
+                }),
+                signal: AbortSignal.timeout(5000),
+            });
+
+            if (response.ok) {
+                console.log('[Pet] Context sent to OpenClaw:', description.substring(0, 80));
+            }
+            return response.ok;
+        } catch (err) {
+            console.warn('[Pet] Failed to send context to OpenClaw:', err.message);
+            return false;
+        }
+    }
+
+    /**
      * 记录错误到历史
      */
     _recordError(requestId, error, elapsed, message) {

@@ -45,8 +45,10 @@ const SetupWizard = require('./setup-wizard'); // 🧙 首次运行向导
 const BackendManager = require('./backend-manager'); // 🧭 多后端目录
 const {
   createUserMessageEvent,
-  createAssistantMessageEvent
+  createAssistantMessageEvent,
+  createPetActivity
 } = require('./desktop-event-protocol');
+const { ChaseController } = require('./chase-controller');
 const configManager = require('./utils/config-manager'); // 🔒 配置管理
 const SecureStorage = require('./utils/secure-storage'); // 🔒 安全存储
 const pathResolver = require('./utils/openclaw-path-resolver'); // 🔧 路径解析
@@ -238,6 +240,66 @@ function dispatchDesktopEvent(protocolEvent, options = {}) {
   }
 }
 
+// ── Desktop Goose: pet activity → OpenClaw context ──
+function dispatchPetActivity(activity) {
+  if (!activity) return;
+  console.log('[Pet Activity]', activity.type, activity.details?.description || '');
+
+  if (openclawClient && activity.type !== 'pet-dragged') {
+    const contextMessage = `[BACAT Status] ${activity.type}: ${activity.description || ''}`;
+    openclawClient.sendPetContext(contextMessage).catch(err => {
+      console.warn('[Pet] Failed to send activity to OpenClaw:', err.message);
+    });
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('pet-activity', activity);
+  }
+}
+
+// ── Desktop Goose: handle commands received from OpenClaw ──
+function handlePetCommand(payload) {
+  const { command, args = {} } = payload || {};
+  console.log('[Pet Command] Received from OpenClaw:', command, args);
+
+  switch (command) {
+    case 'calm-down':
+      if (chaseController) chaseController.setMode('IDLE');
+      if (voiceSystem) voiceSystem.speak('好的，我冷静一下', { priority: 'normal' });
+      break;
+    case 'get-excited':
+      if (chaseController) chaseController.setMode('AGGRESSIVE');
+      break;
+    case 'go-to-position':
+      if (chaseController && typeof args.x === 'number' && typeof args.y === 'number') {
+        chaseController.goToPosition(args.x, args.y);
+      }
+      break;
+    case 'do-trick':
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pet-command', payload);
+      }
+      break;
+    case 'say-something':
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pet-command', payload);
+      }
+      if (voiceSystem && args.text) {
+        voiceSystem.speak(args.text, { priority: 'normal' });
+      }
+      break;
+    case 'set-chase-enabled':
+      if (chaseController) {
+        chaseController.setEnabled(args.enabled !== false);
+      }
+      break;
+    default:
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pet-command', payload);
+      }
+  }
+}
+
 let restartHandler; // 🔄 自动重启处理器
 let performanceMonitor; // 📊 性能监控
 let logRotation; // 📝 日志轮转
@@ -247,6 +309,7 @@ let modelSwitcher; // 🔄 模型切换器
 let setupWizard; // 🧙 首次运行向导
 let setupWizardWindow; // 🧙 向导窗口
 let backendManager; // 🧭 多后端管理器
+let chaseController; // 🏃 桌面大鹅追逐控制器
 
 const AVATAR_MODES = Object.freeze({
   LEGACY: 'legacy',
@@ -763,6 +826,12 @@ async function createWindow() {
     openModelSettings();
   });
 
+  // ── 🏃 Desktop Goose: OpenClaw → Pet commands ──
+  desktopNotifier.on('pet-command', (payload) => {
+    console.log('[Pet Command] Received from OpenClaw:', JSON.stringify(payload));
+    handlePetCommand(payload);
+  });
+
   // 监听消息同步事件
   messageSync.on('new_message', (msg) => {
     dispatchDesktopEvent(createUserMessageEvent({
@@ -866,6 +935,30 @@ async function createWindow() {
   // 开发模式打开开发者工具
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+
+  // ── Desktop Goose chase controller ──
+  chaseController = new ChaseController({
+    mainWindow,
+    petConfig,
+    lyricsWindow,
+    clampToScreen,
+  });
+
+  chaseController.on('state-changed', (state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('chase-state', state);
+    }
+  });
+
+  chaseController.on('activity', (activity) => {
+    dispatchPetActivity(createPetActivity(activity.type, activity.details));
+  });
+
+  // Load chase config or start with defaults
+  const chaseCfg = petConfig.get('chase') || {};
+  if (chaseCfg.enabled !== false) {
+    chaseController.start();
   }
 
   // 让窗口可以穿透点击(点击宠物除外)
@@ -1732,6 +1825,31 @@ ipcMain.on('pet-rotate', (event, { angle }) => {
   if (typeof angle === 'number' && isFinite(angle)) {
     petConfig.set('modelRotationY', angle);
   }
+});
+
+// ── Desktop Goose chase IPC handlers ──
+ipcMain.on('chase-pause', () => {
+  if (chaseController) chaseController.pause();
+});
+
+ipcMain.on('chase-resume', () => {
+  if (chaseController) chaseController.resume();
+});
+
+ipcMain.on('pet-activity', (event, activity) => {
+  dispatchPetActivity(createPetActivity(activity.type, activity.details));
+});
+
+ipcMain.handle('pet-chase-get-state', async () => {
+  return chaseController ? chaseController.getState() : null;
+});
+
+ipcMain.handle('pet-chase-set-mode', async (event, mode) => {
+  if (chaseController) {
+    chaseController.setMode(mode);
+    return { success: true, mode };
+  }
+  return { success: false, error: 'controller not initialized' };
 });
 
 // 三击查看历史消息
@@ -2663,6 +2781,9 @@ app.on('before-quit', () => {
   }
   if (voiceSystem) {
     voiceSystem.stop();
+  }
+  if (chaseController) {
+    chaseController.stop();
   }
   if (workLogger) {
     workLogger.log('success', '桌面应用正常退出');

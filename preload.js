@@ -5,7 +5,10 @@ const VALID_SEND_CHANNELS = [
   'drag-pet',
   'show-pet-context-menu',
   'pet-resize',
-  'pet-rotate'
+  'pet-rotate',
+  'chase-pause',
+  'chase-resume',
+  'pet-activity'
 ];
 
 const VALID_INVOKE_CHANNELS = [
@@ -61,7 +64,9 @@ const VALID_INVOKE_CHANNELS = [
   'gateway-metrics',
   'gateway-anomalies',
   'gateway-full-status',
-  'gateway-clear-metrics'
+  'gateway-clear-metrics',
+  'pet-chase-get-state',
+  'pet-chase-set-mode'
 ];
 
 const VALID_ON_CHANNELS = [
@@ -70,7 +75,10 @@ const VALID_ON_CHANNELS = [
   'agent-response',
   'status-update',
   'show-lyric',
-  'switch-log-entry'
+  'switch-log-entry',
+  'chase-state',
+  'pet-command',
+  'pet-activity'
 ];
 
 contextBridge.exposeInMainWorld('electronAPI', {

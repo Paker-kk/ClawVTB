@@ -29,7 +29,12 @@ class PetConfig {
             avatarMode: 'legacy',
             vrmFilePath: '',
             voiceEnabled: true,
-            lastSeen: Date.now()
+            lastSeen: Date.now(),
+            chase: {
+                enabled: true,
+                mode: 'auto',
+                speedMultiplier: 1.0,
+            }
         };
     }
 
